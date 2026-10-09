@@ -53,12 +53,13 @@ make test      # run unit tests
 make run       # build and launch
 make install   # build and copy to /Applications (no Gatekeeper prompt for local builds)
 make dmg       # build dist/Delta-<version>.dmg
+make release VERSION=x.y.z  # tag and publish a release
 ```
 
-To publish a release, push a version tag. GitHub Actions builds the `.dmg` and attaches it to a GitHub Release:
+To publish a release, run the command below. It bumps the version, runs the tests, then tags and pushes. GitHub Actions builds the `.dmg` and attaches it to a GitHub Release. See [AGENTS.md](AGENTS.md#releasing-a-new-version) for details.
 
 ```bash
-git tag v0.1.0 && git push origin v0.1.0
+make release VERSION=0.2.0
 ```
 
 ### How it works
