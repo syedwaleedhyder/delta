@@ -67,21 +67,25 @@ struct InputEditor: NSViewRepresentable {
     }
 }
 
-/// One input column: a header with the title, line count and Paste/Clear buttons, above the editor.
+/// One input column: a header with the title, line/word/character counts and Paste/Clear buttons,
+/// above the editor.
 struct EditorPane: View {
     let title: String
     @Binding var text: String
 
-    private var lineCount: Int { DiffEngine.splitLines(text).count }
-
     var body: some View {
+        let stats = TextStats(text)
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text(title).font(.headline)
-                Text(text.isEmpty ? "Empty" : "\(lineCount) line\(lineCount == 1 ? "" : "s")")
+                Text(text.isEmpty ? "Empty" : summary(stats))
                     .font(.caption)
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
-                Spacer()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(text.isEmpty ? "" : summary(stats))
+                Spacer(minLength: 4)
                 Button("Paste", systemImage: "doc.on.clipboard") {
                     if let pasted = NSPasteboard.general.string(forType: .string) {
                         text = pasted
@@ -112,5 +116,14 @@ struct EditorPane: View {
                 }
             }
         }
+    }
+
+    private func summary(_ stats: TextStats) -> String {
+        [count(stats.lines, "line"), count(stats.words, "word"), count(stats.characters, "char")]
+            .joined(separator: " · ")
+    }
+
+    private func count(_ value: Int, _ noun: String) -> String {
+        "\(value.formatted()) \(noun)\(value == 1 ? "" : "s")"
     }
 }
