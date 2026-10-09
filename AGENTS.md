@@ -29,6 +29,7 @@ Requires Xcode 16+ and XcodeGen (`brew install xcodegen`).
 | `Sources/Rendering/RenderedDiff.swift` | Markdown → HTML (swift-markdown), then a diff over HTML tokens that wraps changes in `<ins>`/`<del>`. Also builds the page (CSP + nonce script for navigation). |
 | `Sources/Resources/diff.css` | Rendered-view styles (light/dark) |
 | `Sources/Views/` | `ContentView` (layout, toolbar, status bar), `InputEditor` (NSTextView paste box), `RawDiffView`, `RenderedDiffView` (WKWebView) |
+| `Sources/Update/Updater.swift` | Self-update: polls the GitHub `releases/latest` API (on launch, then every 6 h, only while running), downloads `Delta-x.y.z.dmg`, verifies the SHA-256 digest, `codesign` and bundle id/version, stages the app in `~/Library/Caches/Delta/Updates`, and swaps it in with a small shell script after the app quits. |
 | `Tests/DiffEngineTests.swift` | Unit tests for both diff engines |
 | `scripts/release.sh` | Build → sign → `.dmg` (used by `make dmg` and CI) |
 | `.github/workflows/` | `ci.yml` (tests on push/PR to main), `release.yml` (on `v*` tag: test, build .dmg, publish GitHub Release) |
@@ -49,6 +50,12 @@ Requires Xcode 16+ and XcodeGen (`brew install xcodegen`).
    Do this only if no release was published. Never rewrite a published release; ship a new patch version instead.
 
 Users install from the `.dmg` and approve the app once under System Settings → Privacy & Security → "Open Anyway". There is **no Apple Developer account**, so the app is ad-hoc signed and not notarized. `scripts/release.sh` already supports `SIGN_IDENTITY` and `NOTARY_PROFILE` if an account is added later. If that happens, also update the README's install section.
+
+## Auto-update
+
+The app updates itself from GitHub Releases, so a release must keep this shape: tag `vX.Y.Z`, one `.dmg` asset with `Delta.app` at its root, and `MARKETING_VERSION` equal to the tag. `scripts/release.sh` already produces that. Never publish a draft or pre-release as the latest release. Only copies in a writable location outside `DerivedData`, `/Volumes` and App Translocation can replace themselves; others open the release page instead.
+
+The updater has no signature check beyond the SHA-256 digest GitHub reports for the asset, because there is no signing identity. If an Apple Developer account is added, verify the new app's Developer ID before installing.
 
 ## Gotchas (learned the hard way)
 

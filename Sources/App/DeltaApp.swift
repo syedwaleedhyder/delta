@@ -5,6 +5,7 @@ import SwiftUI
 struct DeltaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
+    @StateObject private var updater = Updater.shared
 
     var body: some Scene {
         Window("Delta", id: "main") {
@@ -16,6 +17,14 @@ struct DeltaApp: App {
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About Delta") { AppDelegate.showAbout() }
+            }
+            CommandGroup(after: .appInfo) {
+                if case let .ready(release) = updater.state {
+                    Button("Restart to Update to \(release.version)") { updater.installAndRestart() }
+                }
+                Button("Check for Updates…") { updater.checkNow() }
+                    .disabled(updater.isBusy)
+                Toggle("Check for Updates Automatically", isOn: $updater.automaticChecks)
             }
             CommandGroup(replacing: .newItem) {}
 
@@ -54,10 +63,18 @@ struct DeltaApp: App {
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Updater.shared.startAutomaticChecks()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Updater.shared.installPendingUpdateIfAny()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    @MainActor
     static func showAbout() {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center

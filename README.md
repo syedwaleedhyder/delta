@@ -18,6 +18,7 @@ Other features:
 - **Ignore whitespace:** an option for the raw view.
 - **Swap sides** with one click.
 - **Counts:** lines, words and characters for each side.
+- **Updates itself:** while Delta is open it checks GitHub for a new version, downloads it in the background and installs it when you quit (or on **Restart to Update**). Turn it off, or check by hand, in the Delta menu.
 - **Text is kept:** whatever you pasted is still there the next time you open the app.
 
 ## Install
