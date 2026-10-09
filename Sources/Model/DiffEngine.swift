@@ -24,89 +24,184 @@ enum DiffEngine {
         let b = splitLines(new)
         let ignoreWhitespace = options.ignoreWhitespace
         let key: (String) -> String = { ignoreWhitespace ? collapseWhitespace($0) : $0 }
-        let lineOps = patienceOps(a.map(key), b.map(key))
+        let keysA = a.map(key)
+        let keysB = b.map(key)
+        let blocks = mergeAcrossBlankLines(blocks(from: patienceOps(keysA, keysB)), a, b)
 
         var result = DiffResult()
-        var removed: [Int] = []
-        var inserted: [Int] = []
 
-        func flush() {
-            guard !removed.isEmpty || !inserted.isEmpty else { return }
-            result.hunkStarts.append(result.rows.count)
-            result.inlineHunkStarts.append(result.inlineRows.count)
+        func plain(_ text: String) -> [Segment] { [Segment(text: text, changed: false)] }
 
-            // Pair removed and inserted lines by similarity; those become "modified" rows.
-            let pairs = pairBySimilarity(removed.map { a[$0] }, inserted.map { b[$0] })
-            var leftSegments: [Int: [Segment]] = [:]
-            var rightSegments: [Int: [Segment]] = [:]
-            for (r, i) in pairs {
-                let (l, rt) = wordDiff(a[removed[r]], b[inserted[i]], options: options)
-                leftSegments[r] = l
-                rightSegments[i] = rt
+        func appendEqualRow(_ i: Int, _ j: Int) {
+            result.rows.append(DiffRow(
+                id: result.rows.count, kind: .equal,
+                left: DiffLine(number: i + 1, segments: plain(a[i])),
+                right: DiffLine(number: j + 1, segments: plain(b[j]))))
+            result.inlineRows.append(InlineRow(
+                id: result.inlineRows.count, kind: .equal, oldNumber: i + 1, newNumber: j + 1,
+                segments: plain(b[j])))
+        }
+
+        func appendChangedRow(_ row: DiffRow) {
+            if result.rows.last.map({ $0.kind == .equal }) ?? true {
+                result.hunkStarts.append(result.rows.count)
             }
+            result.rows.append(row)
+        }
 
-            func plain(_ text: String) -> [Segment] { [Segment(text: text, changed: false)] }
-            func appendRemoved(_ r: Int) {
-                result.rows.append(DiffRow(
+        func emitChange(_ removed: [Int], _ inserted: [Int]) {
+            // Pair removed and inserted lines by similarity; those become "modified" rows.
+            let pairs = pairBySimilarity(
+                removed.map { a[$0] }, inserted.map { b[$0] },
+                removed.map { keysA[$0] }, inserted.map { keysB[$0] })
+
+            // Inline rows: within each run between unchanged lines, removals come before additions.
+            var pendingRemoved: [InlineRow] = []
+            var pendingInserted: [InlineRow] = []
+            func flushInline() {
+                guard !pendingRemoved.isEmpty || !pendingInserted.isEmpty else { return }
+                if result.inlineRows.last.map({ $0.kind == .equal }) ?? true {
+                    result.inlineHunkStarts.append(result.inlineRows.count)
+                }
+                for row in pendingRemoved + pendingInserted {
+                    result.inlineRows.append(InlineRow(
+                        id: result.inlineRows.count, kind: row.kind, oldNumber: row.oldNumber,
+                        newNumber: row.newNumber, segments: row.segments))
+                }
+                pendingRemoved.removeAll()
+                pendingInserted.removeAll()
+            }
+            func removedRow(_ r: Int, _ segments: [Segment]) {
+                pendingRemoved.append(InlineRow(
+                    id: 0, kind: .removed, oldNumber: removed[r] + 1, newNumber: nil, segments: segments))
+                result.deletions += 1
+            }
+            func insertedRow(_ i: Int, _ segments: [Segment]) {
+                pendingInserted.append(InlineRow(
+                    id: 0, kind: .added, oldNumber: nil, newNumber: inserted[i] + 1, segments: segments))
+                result.additions += 1
+            }
+            func removeOnly(_ r: Int) {
+                appendChangedRow(DiffRow(
                     id: result.rows.count, kind: .removed,
                     left: DiffLine(number: removed[r] + 1, segments: plain(a[removed[r]])), right: nil))
+                removedRow(r, plain(a[removed[r]]))
             }
-            func appendInserted(_ i: Int) {
-                result.rows.append(DiffRow(
+            func insertOnly(_ i: Int) {
+                appendChangedRow(DiffRow(
                     id: result.rows.count, kind: .added,
                     left: nil, right: DiffLine(number: inserted[i] + 1, segments: plain(b[inserted[i]]))))
+                insertedRow(i, plain(b[inserted[i]]))
             }
 
             var nextRemoved = 0
             var nextInserted = 0
             for (r, i) in pairs {
-                while nextRemoved < r { appendRemoved(nextRemoved); nextRemoved += 1 }
-                while nextInserted < i { appendInserted(nextInserted); nextInserted += 1 }
-                result.rows.append(DiffRow(
-                    id: result.rows.count, kind: .modified,
-                    left: DiffLine(number: removed[r] + 1, segments: leftSegments[r] ?? []),
-                    right: DiffLine(number: inserted[i] + 1, segments: rightSegments[i] ?? [])))
+                while nextRemoved < r { removeOnly(nextRemoved); nextRemoved += 1 }
+                while nextInserted < i { insertOnly(nextInserted); nextInserted += 1 }
+                if keysA[removed[r]] == keysB[inserted[i]] {
+                    // Identical line (a blank) that sits between changes that were merged into one block.
+                    flushInline()
+                    appendEqualRow(removed[r], inserted[i])
+                } else {
+                    let (left, right) = wordDiff(a[removed[r]], b[inserted[i]], options: options)
+                    appendChangedRow(DiffRow(
+                        id: result.rows.count, kind: .modified,
+                        left: DiffLine(number: removed[r] + 1, segments: left),
+                        right: DiffLine(number: inserted[i] + 1, segments: right)))
+                    removedRow(r, left)
+                    insertedRow(i, right)
+                }
                 nextRemoved = r + 1
                 nextInserted = i + 1
             }
-            while nextRemoved < removed.count { appendRemoved(nextRemoved); nextRemoved += 1 }
-            while nextInserted < inserted.count { appendInserted(nextInserted); nextInserted += 1 }
+            while nextRemoved < removed.count { removeOnly(nextRemoved); nextRemoved += 1 }
+            while nextInserted < inserted.count { insertOnly(nextInserted); nextInserted += 1 }
+            flushInline()
+        }
 
-            for (k, i) in removed.enumerated() {
-                result.inlineRows.append(InlineRow(
-                    id: result.inlineRows.count, kind: .removed, oldNumber: i + 1, newNumber: nil,
-                    segments: leftSegments[k] ?? plain(a[i])))
+        for block in blocks {
+            switch block {
+            case let .equal(i, j): appendEqualRow(i, j)
+            case let .change(removed, inserted): emitChange(removed, inserted)
             }
-            for (k, j) in inserted.enumerated() {
-                result.inlineRows.append(InlineRow(
-                    id: result.inlineRows.count, kind: .added, oldNumber: nil, newNumber: j + 1,
-                    segments: rightSegments[k] ?? plain(b[j])))
-            }
+        }
+        return result
+    }
 
-            result.deletions += removed.count
-            result.additions += inserted.count
+    // MARK: - Change blocks
+
+    enum Block: Equatable {
+        case equal(Int, Int)
+        case change(removed: [Int], inserted: [Int])
+    }
+
+    /// Groups an edit script into unchanged lines and blocks of removed/inserted lines.
+    static func blocks(from ops: [Op]) -> [Block] {
+        var result: [Block] = []
+        var removed: [Int] = []
+        var inserted: [Int] = []
+        func flush() {
+            guard !removed.isEmpty || !inserted.isEmpty else { return }
+            result.append(.change(removed: removed, inserted: inserted))
             removed.removeAll()
             inserted.removeAll()
         }
-
-        for op in lineOps {
+        for op in ops {
             switch op {
-            case let .equal(i, j):
-                flush()
-                result.rows.append(DiffRow(
-                    id: result.rows.count, kind: .equal,
-                    left: DiffLine(number: i + 1, segments: [Segment(text: a[i], changed: false)]),
-                    right: DiffLine(number: j + 1, segments: [Segment(text: b[j], changed: false)])))
-                result.inlineRows.append(InlineRow(
-                    id: result.inlineRows.count, kind: .equal, oldNumber: i + 1, newNumber: j + 1,
-                    segments: [Segment(text: b[j], changed: false)]))
-            case let .remove(i):
-                removed.append(i)
-            case let .insert(j):
-                inserted.append(j)
+            case let .equal(i, j): flush(); result.append(.equal(i, j))
+            case let .remove(i): removed.append(i)
+            case let .insert(j): inserted.append(j)
             }
         }
         flush()
+        return result
+    }
+
+    /// Largest removed × inserted block that is paired by similarity; beyond it pairing is positional.
+    private static let maxPairingCells = 40_000
+
+    /// Blank lines that merely separate two change blocks match by coincidence (every document has
+    /// them), and they split a rewritten section in two so its lines are never compared. Fold them into
+    /// one block; similarity pairing then decides which blank lines really correspond.
+    static func mergeAcrossBlankLines(_ blocks: [Block], _ a: [String], _ b: [String]) -> [Block] {
+        func isBlank(_ s: String) -> Bool { s.allSatisfy { $0.isWhitespace } }
+
+        var result: [Block] = []
+        var current: (removed: [Int], inserted: [Int])?
+        var blanks: [(Int, Int)] = []
+
+        func close() {
+            if let current { result.append(.change(removed: current.removed, inserted: current.inserted)) }
+            for (i, j) in blanks { result.append(.equal(i, j)) }
+            current = nil
+            blanks = []
+        }
+
+        for block in blocks {
+            switch block {
+            case let .equal(i, j):
+                if current != nil && isBlank(a[i]) && isBlank(b[j]) {
+                    blanks.append((i, j))
+                } else {
+                    close()
+                    result.append(.equal(i, j))
+                }
+            case let .change(removed, inserted):
+                if let open = current {
+                    let mergedRemoved = open.removed + blanks.map(\.0) + removed
+                    let mergedInserted = open.inserted + blanks.map(\.1) + inserted
+                    if mergedRemoved.count * mergedInserted.count <= maxPairingCells {
+                        current = (mergedRemoved, mergedInserted)
+                        blanks = []
+                        continue
+                    }
+                    close()
+                }
+                current = (removed, inserted)
+            }
+        }
+        close()
         return result
     }
 
@@ -210,27 +305,38 @@ enum DiffEngine {
     /// Matches removed lines to added lines that are similar to them, keeping both in order, so a
     /// reworded line gets word-level highlights even when lines around it were added or deleted.
     /// Returns (removed index, inserted index) pairs in ascending order.
-    static func pairBySimilarity(_ removed: [String], _ inserted: [String]) -> [(Int, Int)] {
+    static func pairBySimilarity(
+        _ removed: [String], _ inserted: [String], _ removedKeys: [String], _ insertedKeys: [String]
+    ) -> [(Int, Int)] {
         let n = removed.count, m = inserted.count
         guard n > 0, m > 0 else { return [] }
         // A lone replaced line is always shown as a modification.
         if n == 1 && m == 1 { return [(0, 0)] }
         // Very large blocks: fall back to pairing by position.
-        if n * m > 40_000 { return (0..<min(n, m)).map { ($0, $0) } }
+        if n * m > maxPairingCells { return (0..<min(n, m)).map { ($0, $0) } }
 
         let bagsA = removed.map(wordBag)
         let bagsB = inserted.map(wordBag)
         let threshold = 0.35
+        let blankMatchScore = 0.2
 
         // score[i][j]: best total similarity using the first i removed and first j inserted lines.
         var score = [[Double]](repeating: [Double](repeating: 0, count: m + 1), count: n + 1)
         var similarity = [[Double]](repeating: [Double](repeating: 0, count: m), count: n)
         for i in 1...n {
             for j in 1...m {
-                let s = diceSimilarity(bagsA[i - 1], bagsB[j - 1])
+                let s: Double
+                if removedKeys[i - 1] == insertedKeys[j - 1] {
+                    // Identical lines match outright; identical blank lines only weakly, so they
+                    // never outweigh a genuine reworded pair.
+                    s = removed[i - 1].allSatisfy { $0.isWhitespace } ? blankMatchScore : 1
+                } else {
+                    let dice = diceSimilarity(bagsA[i - 1], bagsB[j - 1])
+                    s = dice >= threshold ? dice : 0
+                }
                 similarity[i - 1][j - 1] = s
                 var best = max(score[i - 1][j], score[i][j - 1])
-                if s >= threshold { best = max(best, score[i - 1][j - 1] + s) }
+                if s > 0 { best = max(best, score[i - 1][j - 1] + s) }
                 score[i][j] = best
             }
         }
@@ -239,7 +345,7 @@ enum DiffEngine {
         var i = n, j = m
         while i > 0 && j > 0 {
             let s = similarity[i - 1][j - 1]
-            if s >= threshold && score[i][j] == score[i - 1][j - 1] + s {
+            if s > 0 && score[i][j] == score[i - 1][j - 1] + s {
                 pairs.append((i - 1, j - 1)); i -= 1; j -= 1
             } else if score[i][j] == score[i - 1][j] {
                 i -= 1

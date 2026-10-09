@@ -206,6 +206,37 @@ final class DiffAccuracyTests: XCTestCase {
         XCTAssertEqual(result.rows.compactMap { $0.right?.number }.sorted(), Array(1...7))
     }
 
+    func testBlankLinesBetweenRewrittenSectionsDoNotBlockPairing() {
+        let old = """
+        Intro line here.
+
+        Priority: their direct request, then an open question, then an objection.
+
+        Pick a gear and switch whenever the customer does:
+        - FAST TRACK: visit intent, stop discovery and schedule now.
+        - STANDARD: interest in a vehicle, readiness unknown: answer then ask questions.
+
+        Closing paragraph that never changes.
+        """
+        let new = """
+        Intro line here.
+
+        Gears: switch whenever the customer does:
+        - FAST TRACK: visit intent, stop discovery and schedule, ask only what the booking needs.
+        - STANDARD: vehicle interest, readiness unknown: answer then ask questions.
+
+        Closing paragraph that never changes.
+        """
+        let result = DiffEngine.compute(old: old, new: new)
+        let modified = result.rows.filter { $0.kind == .modified }.map { $0.left!.text.prefix(12) }
+        XCTAssertEqual(modified, ["Pick a gear a".prefix(12), "- FAST TRACK:", "- STANDARD: i"].map { $0.prefix(12) })
+        XCTAssertEqual(result.rows.last?.kind, .equal)
+        // Both sides are fully accounted for, in order.
+        XCTAssertEqual(result.rows.compactMap { $0.left?.number }, Array(1...9))
+        XCTAssertEqual(result.rows.compactMap { $0.right?.number }, Array(1...7))
+        XCTAssertEqual(result.hunkCount, result.hunkStarts.count)
+    }
+
     func testLoneReplacedLineIsStillModified() {
         let result = DiffEngine.compute(old: "alpha beta gamma", new: "one two three")
         XCTAssertEqual(result.rows.map(\.kind), [.modified])
