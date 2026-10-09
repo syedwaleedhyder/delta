@@ -1,0 +1,28 @@
+name: Release
+
+# Push a tag like v0.2.0 to build Delta.dmg and publish it as a GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Run tests
+        run: make test
+      - name: Build .dmg
+        run: VERSION="${GITHUB_REF_NAME#v}" scripts/release.sh
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.dmg \
+            --title "Delta $GITHUB_REF_NAME" \
+            --generate-notes

@@ -1,0 +1,66 @@
+name: Delta
+options:
+  bundleIdPrefix: com.delta
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  Markdown:
+    url: https://github.com/swiftlang/swift-markdown.git
+    from: "0.9.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  Delta:
+    type: application
+    platform: macOS
+    sources:
+      - Sources
+    dependencies:
+      - package: Markdown
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.delta.app
+        PRODUCT_NAME: Delta
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Delta
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Delta — Diff Viewer"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: YES
+
+  DeltaTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+    dependencies:
+      - target: Delta
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.delta.app.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Delta.app/Contents/MacOS/Delta"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  Delta:
+    build:
+      targets:
+        Delta: all
+    test:
+      targets:
+        - DeltaTests
+    run:
+      config: Debug
+    archive:
+      config: Release

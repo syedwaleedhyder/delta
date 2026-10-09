@@ -1,0 +1,111 @@
+:root {
+  color-scheme: light dark;
+  --text: #1d1d1f;
+  --muted: #6e6e73;
+  --bg: #ffffff;
+  --rule: #d2d2d7;
+  --code-bg: #f5f5f7;
+  --ins-bg: rgba(46, 160, 67, 0.22);
+  --ins-text: #116329;
+  --del-bg: rgba(248, 81, 73, 0.18);
+  --del-text: #a40e26;
+  --marker: #bf8700;
+  --current: rgba(191, 135, 0, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #f5f5f7;
+    --muted: #a1a1a6;
+    --bg: #1e1e1e;
+    --rule: #3a3a3c;
+    --code-bg: #2c2c2e;
+    --ins-bg: rgba(46, 160, 67, 0.30);
+    --ins-text: #7ee787;
+    --del-bg: rgba(248, 81, 73, 0.28);
+    --del-text: #ffa198;
+    --marker: #d29922;
+    --current: rgba(210, 153, 34, 0.16);
+  }
+}
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+}
+
+.markdown {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 40px 80px;
+}
+
+h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 1.4em 0 0.6em; }
+h1 { font-size: 2em; border-bottom: 1px solid var(--rule); padding-bottom: 0.3em; }
+h2 { font-size: 1.5em; border-bottom: 1px solid var(--rule); padding-bottom: 0.3em; }
+h3 { font-size: 1.25em; }
+p, ul, ol, pre, blockquote, table { margin: 0 0 1em; }
+a { color: #0969da; }
+hr { border: 0; border-top: 1px solid var(--rule); margin: 1.5em 0; }
+img { max-width: 100%; }
+li > p { margin: 0; }
+li + li { margin-top: 0.15em; }
+
+code {
+  font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--code-bg);
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+}
+pre {
+  background: var(--code-bg);
+  padding: 12px 16px;
+  border-radius: 6px;
+  /* Wrap instead of scrolling sideways, so changes are never hidden and the margin marker isn't clipped. */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+pre code { background: none; padding: 0; }
+
+blockquote {
+  margin-left: 0;
+  padding: 0 1em;
+  color: var(--muted);
+  border-left: 4px solid var(--rule);
+}
+
+table { border-collapse: collapse; }
+th, td { border: 1px solid var(--rule); padding: 6px 12px; }
+
+ins {
+  background: var(--ins-bg);
+  color: var(--ins-text);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  border-radius: 2px;
+}
+del + ins { margin-left: 3px; }
+del {
+  background: var(--del-bg);
+  color: var(--del-text);
+  text-decoration: line-through;
+  border-radius: 2px;
+}
+
+/* Changed blocks get a bar in the left margin. */
+.chg { position: relative; }
+.chg::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--marker);
+}
+li.chg::before { left: -56px; }
+td.chg::before, th.chg::before { display: none; }
+.chg.current { background: var(--current); border-radius: 4px; }
