@@ -142,3 +142,24 @@ final class RenderedDiffTests: XCTestCase {
         XCTAssertTrue(page.contains("script-src 'nonce-"))
     }
 }
+
+final class TextStatsTests: XCTestCase {
+    func testEmptyText() {
+        XCTAssertEqual(TextStats(""), TextStats())
+    }
+
+    func testCountsLinesWordsAndCharacters() {
+        let stats = TextStats("# Title\n\nHello, world!\n")
+        XCTAssertEqual(stats.lines, 3)
+        XCTAssertEqual(stats.words, 3)
+        XCTAssertEqual(stats.characters, 23)
+    }
+
+    func testMarkdownSyntaxIsNotAWord() {
+        XCTAssertEqual(TextStats("- one\n- two\n```\ncode\n```").words, 3)
+    }
+
+    func testCharactersCountEmojiOnce() {
+        XCTAssertEqual(TextStats("👍🏽 ok").characters, 4)
+    }
+}
