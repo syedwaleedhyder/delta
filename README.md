@@ -18,7 +18,6 @@ Other features:
 - **Ignore whitespace:** an option for the raw view.
 - **Swap sides** with one click.
 - **Counts:** lines, words and characters for each side.
-- **Counts:** lines, words and characters for each side.
 - **Text is kept:** whatever you pasted is still there the next time you open the app.
 
 ## Install
