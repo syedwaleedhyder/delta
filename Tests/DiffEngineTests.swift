@@ -163,3 +163,67 @@ final class TextStatsTests: XCTestCase {
         XCTAssertEqual(TextStats("👍🏽 ok").characters, 4)
     }
 }
+
+final class DiffAccuracyTests: XCTestCase {
+    func testRewordedLinesGetWordHighlightsDespiteDeletedLinesAndRepeatedBlanks() {
+        let old = """
+        Pick a gear:
+        - FAST TRACK: visit or test-drive intent, stop discovery and schedule now.
+        - STANDARD: interest in a vehicle, readiness unknown: answer, then ask 2-4 questions at most.
+        - CONSULTATIVE: no vehicle yet or a problem to solve: one needs question at a time.
+
+        Closing line stays.
+        """
+        let new = """
+        Pick a gear:
+        - STANDARD: vehicle interest, readiness unknown: answer, then ask 2-4 questions at most.
+        - CONSULTATIVE: no vehicle yet: one needs question at a time.
+
+        Closing line stays.
+        """
+        let result = DiffEngine.compute(old: old, new: new)
+        let modified = result.rows.filter { $0.kind == .modified }
+        XCTAssertEqual(modified.count, 2)
+        XCTAssertTrue(modified[0].left!.text.hasPrefix("- STANDARD"))
+        XCTAssertTrue(modified[0].right!.text.hasPrefix("- STANDARD"))
+        XCTAssertTrue(modified[1].left!.text.hasPrefix("- CONSULTATIVE"))
+        // Only the changed words are highlighted, not the whole line.
+        XCTAssertTrue(modified[0].left!.segments.contains { !$0.changed })
+        // FAST TRACK is a plain deletion.
+        XCTAssertEqual(result.rows.filter { $0.kind == .removed }.map { $0.left!.text.prefix(13) }, ["- FAST TRACK:"])
+        XCTAssertEqual(result.deletions, 3)
+        XCTAssertEqual(result.additions, 2)
+    }
+
+    func testRepeatedLinesDoNotSplitARewrittenSection() {
+        let old = "intro\n\nalpha one two three\n\nbeta four five six\n\nend"
+        let new = "intro\n\nbeta four five six seven\n\nalpha one two three eight\n\nend"
+        let result = DiffEngine.compute(old: old, new: new)
+        XCTAssertEqual(result.rows.first?.kind, .equal)
+        XCTAssertEqual(result.rows.last?.kind, .equal)
+        // Every line is accounted for exactly once on each side.
+        XCTAssertEqual(result.rows.compactMap { $0.left?.number }, Array(1...7))
+        XCTAssertEqual(result.rows.compactMap { $0.right?.number }.sorted(), Array(1...7))
+    }
+
+    func testLoneReplacedLineIsStillModified() {
+        let result = DiffEngine.compute(old: "alpha beta gamma", new: "one two three")
+        XCTAssertEqual(result.rows.map(\.kind), [.modified])
+    }
+
+    func testPatienceOpsCoverEveryLine() {
+        let a = ["x", "a", "b", "a", "c", "y"]
+        let b = ["x", "c", "a", "b", "a", "z", "y"]
+        let ops = DiffEngine.patienceOps(a, b)
+        var seenA: [Int] = [], seenB: [Int] = []
+        for op in ops {
+            switch op {
+            case let .equal(i, j): seenA.append(i); seenB.append(j)
+            case let .remove(i): seenA.append(i)
+            case let .insert(j): seenB.append(j)
+            }
+        }
+        XCTAssertEqual(seenA, Array(a.indices))
+        XCTAssertEqual(seenB, Array(b.indices))
+    }
+}

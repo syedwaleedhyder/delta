@@ -1,7 +1,11 @@
 import Foundation
 
-/// Line diff (Myers, via the standard library's `CollectionDifference`) with word-level
-/// refinement of lines that were changed rather than purely added or removed.
+/// Line diff with word-level refinement of lines that were changed rather than purely added or removed.
+///
+/// Lines are first anchored on lines that occur exactly once on each side (patience diff), so repeated
+/// lines such as blank lines can't split a rewritten section apart. Between anchors the diff is Myers,
+/// via the standard library's `CollectionDifference`. Within a changed block, removed and added lines
+/// are paired by similarity rather than by position.
 enum DiffEngine {
     struct Options: Hashable, Sendable {
         var ignoreWhitespace = false
@@ -20,7 +24,7 @@ enum DiffEngine {
         let b = splitLines(new)
         let ignoreWhitespace = options.ignoreWhitespace
         let key: (String) -> String = { ignoreWhitespace ? collapseWhitespace($0) : $0 }
-        let lineOps = ops(a.map(key), b.map(key)) { $0 == $1 }
+        let lineOps = patienceOps(a.map(key), b.map(key))
 
         var result = DiffResult()
         var removed: [Int] = []
@@ -31,45 +35,52 @@ enum DiffEngine {
             result.hunkStarts.append(result.rows.count)
             result.inlineHunkStarts.append(result.inlineRows.count)
 
-            // Pair removed and inserted lines in order; those become "modified" rows.
-            let paired = min(removed.count, inserted.count)
-            var leftSegments: [[Segment]] = []
-            var rightSegments: [[Segment]] = []
-            for k in 0..<paired {
-                let (l, r) = wordDiff(a[removed[k]], b[inserted[k]], options: options)
-                leftSegments.append(l)
-                rightSegments.append(r)
+            // Pair removed and inserted lines by similarity; those become "modified" rows.
+            let pairs = pairBySimilarity(removed.map { a[$0] }, inserted.map { b[$0] })
+            var leftSegments: [Int: [Segment]] = [:]
+            var rightSegments: [Int: [Segment]] = [:]
+            for (r, i) in pairs {
+                let (l, rt) = wordDiff(a[removed[r]], b[inserted[i]], options: options)
+                leftSegments[r] = l
+                rightSegments[i] = rt
             }
 
-            for k in 0..<max(removed.count, inserted.count) {
-                let id = result.rows.count
-                if k < paired {
-                    result.rows.append(DiffRow(
-                        id: id, kind: .modified,
-                        left: DiffLine(number: removed[k] + 1, segments: leftSegments[k]),
-                        right: DiffLine(number: inserted[k] + 1, segments: rightSegments[k])))
-                } else if k < removed.count {
-                    result.rows.append(DiffRow(
-                        id: id, kind: .removed,
-                        left: DiffLine(number: removed[k] + 1, segments: [Segment(text: a[removed[k]], changed: false)]),
-                        right: nil))
-                } else {
-                    result.rows.append(DiffRow(
-                        id: id, kind: .added,
-                        left: nil,
-                        right: DiffLine(number: inserted[k] + 1, segments: [Segment(text: b[inserted[k]], changed: false)])))
-                }
+            func plain(_ text: String) -> [Segment] { [Segment(text: text, changed: false)] }
+            func appendRemoved(_ r: Int) {
+                result.rows.append(DiffRow(
+                    id: result.rows.count, kind: .removed,
+                    left: DiffLine(number: removed[r] + 1, segments: plain(a[removed[r]])), right: nil))
             }
+            func appendInserted(_ i: Int) {
+                result.rows.append(DiffRow(
+                    id: result.rows.count, kind: .added,
+                    left: nil, right: DiffLine(number: inserted[i] + 1, segments: plain(b[inserted[i]]))))
+            }
+
+            var nextRemoved = 0
+            var nextInserted = 0
+            for (r, i) in pairs {
+                while nextRemoved < r { appendRemoved(nextRemoved); nextRemoved += 1 }
+                while nextInserted < i { appendInserted(nextInserted); nextInserted += 1 }
+                result.rows.append(DiffRow(
+                    id: result.rows.count, kind: .modified,
+                    left: DiffLine(number: removed[r] + 1, segments: leftSegments[r] ?? []),
+                    right: DiffLine(number: inserted[i] + 1, segments: rightSegments[i] ?? [])))
+                nextRemoved = r + 1
+                nextInserted = i + 1
+            }
+            while nextRemoved < removed.count { appendRemoved(nextRemoved); nextRemoved += 1 }
+            while nextInserted < inserted.count { appendInserted(nextInserted); nextInserted += 1 }
 
             for (k, i) in removed.enumerated() {
-                let segments = k < paired ? leftSegments[k] : [Segment(text: a[i], changed: false)]
                 result.inlineRows.append(InlineRow(
-                    id: result.inlineRows.count, kind: .removed, oldNumber: i + 1, newNumber: nil, segments: segments))
+                    id: result.inlineRows.count, kind: .removed, oldNumber: i + 1, newNumber: nil,
+                    segments: leftSegments[k] ?? plain(a[i])))
             }
             for (k, j) in inserted.enumerated() {
-                let segments = k < paired ? rightSegments[k] : [Segment(text: b[j], changed: false)]
                 result.inlineRows.append(InlineRow(
-                    id: result.inlineRows.count, kind: .added, oldNumber: nil, newNumber: j + 1, segments: segments))
+                    id: result.inlineRows.count, kind: .added, oldNumber: nil, newNumber: j + 1,
+                    segments: rightSegments[k] ?? plain(b[j])))
             }
 
             result.deletions += removed.count
@@ -110,6 +121,150 @@ enum DiffEngine {
         var lines = normalized.components(separatedBy: "\n")
         if normalized.hasSuffix("\n") { lines.removeLast() }
         return lines
+    }
+
+    /// Patience-style line diff: anchors on lines that occur exactly once on both sides, keeps the longest
+    /// ordered run of them, and diffs what lies between with Myers.
+    static func patienceOps(_ a: [String], _ b: [String]) -> [Op] {
+        var result: [Op] = []
+        result.reserveCapacity(max(a.count, b.count))
+
+        func solve(_ aStart: Int, _ aEnd: Int, _ bStart: Int, _ bEnd: Int) {
+            var lo1 = aStart, hi1 = aEnd, lo2 = bStart, hi2 = bEnd
+            while lo1 < hi1 && lo2 < hi2 && a[lo1] == b[lo2] {
+                result.append(.equal(lo1, lo2)); lo1 += 1; lo2 += 1
+            }
+            var tail = 0
+            while lo1 < hi1 && lo2 < hi2 && a[hi1 - 1] == b[hi2 - 1] {
+                hi1 -= 1; hi2 -= 1; tail += 1
+            }
+
+            let anchors = uniqueAnchors(a, lo1, hi1, b, lo2, hi2)
+            if anchors.isEmpty {
+                let offsetA = lo1, offsetB = lo2
+                for op in ops(Array(a[lo1..<hi1]), Array(b[lo2..<hi2]), by: { $0 == $1 }) {
+                    switch op {
+                    case let .equal(i, j): result.append(.equal(offsetA + i, offsetB + j))
+                    case let .remove(i): result.append(.remove(offsetA + i))
+                    case let .insert(j): result.append(.insert(offsetB + j))
+                    }
+                }
+            } else {
+                var nextA = lo1, nextB = lo2
+                for (x, y) in anchors {
+                    solve(nextA, x, nextB, y)
+                    result.append(.equal(x, y))
+                    nextA = x + 1; nextB = y + 1
+                }
+                solve(nextA, hi1, nextB, hi2)
+            }
+
+            for k in 0..<tail { result.append(.equal(hi1 + k, hi2 + k)) }
+        }
+
+        solve(0, a.count, 0, b.count)
+        return result
+    }
+
+    /// Index pairs of lines that occur exactly once in both ranges, reduced to the longest run that is
+    /// in order on both sides.
+    private static func uniqueAnchors(
+        _ a: [String], _ aStart: Int, _ aEnd: Int,
+        _ b: [String], _ bStart: Int, _ bEnd: Int
+    ) -> [(Int, Int)] {
+        guard aStart < aEnd, bStart < bEnd else { return [] }
+        var countA: [String: Int] = [:]
+        var countB: [String: Int] = [:]
+        var positionInB: [String: Int] = [:]
+        for i in aStart..<aEnd { countA[a[i], default: 0] += 1 }
+        for j in bStart..<bEnd { countB[b[j], default: 0] += 1; positionInB[b[j]] = j }
+
+        var candidates: [(Int, Int)] = []
+        for i in aStart..<aEnd where countA[a[i]] == 1 && countB[a[i]] == 1 {
+            if let j = positionInB[a[i]] { candidates.append((i, j)) }
+        }
+        guard !candidates.isEmpty else { return [] }
+
+        // Longest increasing subsequence on the B positions (patience sorting).
+        var tails: [Int] = []          // candidate index ending the best run of each length
+        var previous = [Int?](repeating: nil, count: candidates.count)
+        for (k, candidate) in candidates.enumerated() {
+            var low = 0, high = tails.count
+            while low < high {
+                let mid = (low + high) / 2
+                if candidates[tails[mid]].1 < candidate.1 { low = mid + 1 } else { high = mid }
+            }
+            previous[k] = low > 0 ? tails[low - 1] : nil
+            if low == tails.count { tails.append(k) } else { tails[low] = k }
+        }
+
+        var chain: [(Int, Int)] = []
+        var cursor: Int? = tails.last
+        while let k = cursor {
+            chain.append(candidates[k])
+            cursor = previous[k]
+        }
+        return chain.reversed()
+    }
+
+    /// Matches removed lines to added lines that are similar to them, keeping both in order, so a
+    /// reworded line gets word-level highlights even when lines around it were added or deleted.
+    /// Returns (removed index, inserted index) pairs in ascending order.
+    static func pairBySimilarity(_ removed: [String], _ inserted: [String]) -> [(Int, Int)] {
+        let n = removed.count, m = inserted.count
+        guard n > 0, m > 0 else { return [] }
+        // A lone replaced line is always shown as a modification.
+        if n == 1 && m == 1 { return [(0, 0)] }
+        // Very large blocks: fall back to pairing by position.
+        if n * m > 40_000 { return (0..<min(n, m)).map { ($0, $0) } }
+
+        let bagsA = removed.map(wordBag)
+        let bagsB = inserted.map(wordBag)
+        let threshold = 0.35
+
+        // score[i][j]: best total similarity using the first i removed and first j inserted lines.
+        var score = [[Double]](repeating: [Double](repeating: 0, count: m + 1), count: n + 1)
+        var similarity = [[Double]](repeating: [Double](repeating: 0, count: m), count: n)
+        for i in 1...n {
+            for j in 1...m {
+                let s = diceSimilarity(bagsA[i - 1], bagsB[j - 1])
+                similarity[i - 1][j - 1] = s
+                var best = max(score[i - 1][j], score[i][j - 1])
+                if s >= threshold { best = max(best, score[i - 1][j - 1] + s) }
+                score[i][j] = best
+            }
+        }
+
+        var pairs: [(Int, Int)] = []
+        var i = n, j = m
+        while i > 0 && j > 0 {
+            let s = similarity[i - 1][j - 1]
+            if s >= threshold && score[i][j] == score[i - 1][j - 1] + s {
+                pairs.append((i - 1, j - 1)); i -= 1; j -= 1
+            } else if score[i][j] == score[i - 1][j] {
+                i -= 1
+            } else {
+                j -= 1
+            }
+        }
+        return pairs.reversed()
+    }
+
+    private static func wordBag(_ line: String) -> [String: Int] {
+        var bag: [String: Int] = [:]
+        for token in tokenize(line) where token.first.map({ $0.isLetter || $0.isNumber }) ?? false {
+            bag[token.lowercased(), default: 0] += 1
+        }
+        return bag
+    }
+
+    /// Dice coefficient of two word multisets: 1 for identical words, 0 for nothing in common.
+    private static func diceSimilarity(_ x: [String: Int], _ y: [String: Int]) -> Double {
+        let total = x.values.reduce(0, +) + y.values.reduce(0, +)
+        guard total > 0 else { return 0 }
+        var shared = 0
+        for (word, count) in x { shared += min(count, y[word] ?? 0) }
+        return Double(2 * shared) / Double(total)
     }
 
     /// Turns a Myers diff into an ordered edit script. Within a change block, removals come before insertions.

@@ -24,7 +24,7 @@ Requires Xcode 16+ and XcodeGen (`brew install xcodegen`).
 | `project.yml` | XcodeGen spec. **The `.xcodeproj` is generated and git-ignored**. Edit this file, never the project. |
 | `Sources/App/DeltaApp.swift` | `@main`, single `Window`, menus and keyboard shortcuts, About panel |
 | `Sources/Model/AppState.swift` | `@MainActor ObservableObject`: input text (saved to UserDefaults), view options, debounced background diffing, change navigation |
-| `Sources/Model/DiffEngine.swift` | Line diff (Myers via `CollectionDifference`), then word diff on paired changed lines. Pure functions; covered by tests. |
+| `Sources/Model/DiffEngine.swift` | Line diff: patience anchors on lines unique to both sides, Myers (`CollectionDifference`) between them. Changed lines are paired by similarity, then word-diffed. Pure functions; covered by tests. |
 | `Sources/Model/DiffModel.swift` | `DiffResult`, `DiffRow` (side-by-side), `InlineRow`, `Segment` |
 | `Sources/Rendering/RenderedDiff.swift` | Markdown → HTML (swift-markdown), then a diff over HTML tokens that wraps changes in `<ins>`/`<del>`. Also builds the page (CSP + nonce script for navigation). |
 | `Sources/Resources/diff.css` | Rendered-view styles (light/dark) |
