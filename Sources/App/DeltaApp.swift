@@ -79,7 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         let credits = NSAttributedString(
-            string: "Diff Viewer\nCompare two texts, raw or as rendered Markdown.",
+            string: "Diff Viewer\nCompare two texts, raw or as rendered Markdown.\nUpdates itself from GitHub Releases.",
             attributes: [
                 .font: NSFont.systemFont(ofSize: 11),
                 .foregroundColor: NSColor.secondaryLabelColor,
